@@ -3,7 +3,8 @@
 /out/
 *.class
 *.jar
-
+SmartCodeAnalyzer\src\main\java\com\smartcodeanalyzer\GeminiAI.java
+SmartCodeAnalyzer\src\main\java\com\smartcodeanalyzer\Main.java
 # IntelliJ / VSCode
 .idea/
 *.iml

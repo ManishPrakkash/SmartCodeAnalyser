@@ -91,11 +91,50 @@ public class GeminiAI {
      */
     public String explainCode(String code) {
         String codeBlock = prepareCode(code);
-        String prompt = "Explain the following Java code in detail, covering its purpose, " +
-                        "structure, and functionality. Include information about classes, methods, " +
-                        "and any design patterns used.\n\n" + codeBlock;
-        
-        return sendRequest(prompt);
+    String prompt = "EXPLAIN (terminal-friendly, plain text):\n" +
+            "Provide exactly 5 short numbered points (1.-5.) about the code.\n" +
+            "Each point should be one short sentence (max 1-2 lines).\n" +
+            "Do NOT use Markdown, bullets (* or -), bold/italic (** or _), or code fences (``` or `).\n" +
+            "Avoid extra commentary; just output the 5 numbered points.\n\n" + codeBlock;
+        String raw = sendRequest(prompt);
+        return sanitizeExplainOutput(raw);
+    }
+
+    /**
+     * Clean up EXPLAIN output: strip markdown/code fences and ensure plain numbered points.
+     */
+    private String sanitizeExplainOutput(String raw) {
+        if (raw == null) return "";
+        // Remove triple backticks and inline backticks
+        String cleaned = raw.replace("```", "").replace("`", "");
+        // Remove bold/italic markers
+        cleaned = cleaned.replace("**", "").replace("__", "").replace("*", "");
+            // Normalize bullets (•, -, +, *, +) at line starts
+            // Use a simple, safe pattern and include the bullet character directly
+            cleaned = cleaned.replaceAll("(?m)^\\s*[•*+-]\\s*", "");
+        // Split into lines and collect non-empty lines
+        String[] lines = cleaned.split("\\r?\\n");
+        java.util.List<String> points = new java.util.ArrayList<>();
+        for (String ln : lines) {
+            String t = ln.trim();
+            if (t.isEmpty()) continue;
+            // Remove leading numbering like '1)', '1.' etc
+                t = t.replaceFirst("^\\s*\\d+\\s*[\\)\\.]?\\s*", "");
+            // Skip lines that are clearly meta
+            if (t.toLowerCase().startsWith("note:") || t.toLowerCase().startsWith("explain")) continue;
+            points.add(t);
+            if (points.size() >= 6) break; // allow up to 6 but prefer 5
+        }
+        // If we found none, return original trimmed
+        if (points.isEmpty()) return cleaned.trim();
+        // Ensure we output exactly up to 6 numbered points, prefer first 5
+        int take = Math.min(points.size(), 6);
+        if (take > 5) take = 5; // prefer 5 points
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < take; i++) {
+            out.append(i + 1).append(". ").append(points.get(i)).append(System.lineSeparator());
+        }
+        return out.toString().trim();
     }
 
     /**
@@ -105,8 +144,9 @@ public class GeminiAI {
      */
     public String debugCode(String code) {
         String codeBlock = prepareCode(code);
-        String prompt = "Find potential bugs, logic errors, or performance issues in the following " +
-                        "Java code. Explain each issue found and suggest how to fix them.\n\n" + codeBlock;
+        String prompt = "DEBUG (short):\n" +
+                        "- If no errors, return: 'No errors found.'\n" +
+                        "- Otherwise list issues as: [line]: brief reason -> concise fix\n\n" + codeBlock;
         
         return sendRequest(prompt);
     }
@@ -118,9 +158,10 @@ public class GeminiAI {
      */
     public String refactorCode(String code) {
         String codeBlock = prepareCode(code);
-        String prompt = "Refactor and optimize the following Java code. Suggest improvements in terms " +
-                        "of code quality, efficiency, readability, and best practices. Provide both " +
-                        "explanation and improved code examples.\n\n" + codeBlock;
+        String prompt = "REFACTOR (optimize):\n" +
+                        "1) TIME and SPACE complexity (current)\n" +
+                        "2) Is optimization possible? (yes/no) and short rationale\n" +
+                        "3) If yes: provide optimized code and new TIME/SPACE complexities\n\n" + codeBlock;
         
         return sendRequest(prompt);
     }
@@ -249,12 +290,12 @@ public class GeminiAI {
         if (code == null) return "";
         final int max = 16000; // chars
         if (code.length() <= max) {
-            return "```java\n" + code + "\n```";
+            return "---CODE START (java)---\n" + code + "\n---CODE END---";
         }
         int head = 8000;
         int tail = 8000;
         String truncated = code.substring(0, head) + "\n...\n[truncated for length]\n...\n" + code.substring(code.length() - tail);
-        return "```java\n" + truncated + "\n```\n(Note: Input code was truncated for analysis due to size.)";
+        return "---CODE START (java)---\n" + truncated + "\n---CODE END---\n(Note: input was truncated for length)";
     }
 
     // Ollama local fallback (http://localhost:11434 by default)

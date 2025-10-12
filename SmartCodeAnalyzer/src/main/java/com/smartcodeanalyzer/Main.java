@@ -15,6 +15,8 @@ public class Main {
     private static GeminiAI geminiAI;
     private static boolean dbConnected = false;
     private static boolean aiConfigured = false;
+    private enum AIMode { EXPLAIN, DEBUG, REFACTOR }
+    private static AIMode aiMode = AIMode.EXPLAIN;
     
     // Hardcoded credentials
     private static final String RAILWAY_CONNECTION = "mysql://root:yeALRPBHedbAuAPUwCkWBQcYnIBwMJTZ@metro.proxy.rlwy.net:28742/railway";
@@ -38,6 +40,9 @@ public class Main {
             switch (choice) {
                 case 1:
                     analyzeJavaFile();
+                    break;
+                case 5:
+                    setAIMode();
                     break;
                 case 2:
                     if (dbConnected) {
@@ -176,6 +181,7 @@ public class Main {
         System.out.println("2. View Analysis Reports" + (!dbConnected ? " (Unavailable - No Database Connection)" : ""));
         System.out.println("3. View Detailed Report" + (!dbConnected ? " (Unavailable - No Database Connection)" : ""));
         System.out.println("4. About");
+        System.out.println("5. Set AI Mode (current: " + aiMode + ")");
         System.out.println("0. Exit");
         System.out.print("Enter your choice: ");
     }
@@ -196,15 +202,18 @@ public class Main {
      * Analyzes a Java file
      */
     private static void analyzeJavaFile() {
-        System.out.println("\n==== Java File Analysis ====");
+        System.out.println("\n==== Source File Analysis ====");
         
         // File selection
-        System.out.print("Enter path to Java file: ");
+        System.out.print("Enter path to source file (.java, .py, .c, .cpp): ");
         String filePath = scanner.nextLine().trim();
         File file = new File(filePath);
         
-        if (!file.exists() || !file.isFile() || !filePath.endsWith(".java")) {
-            System.out.println(" Invalid file path or not a Java file.");
+        boolean ok = file.exists() && file.isFile();
+        String lower = filePath.toLowerCase();
+        boolean supportedExt = lower.endsWith(".java") || lower.endsWith(".py") || lower.endsWith(".c") || lower.endsWith(".cpp") || lower.endsWith(".cc") || lower.endsWith(".cxx") || lower.endsWith(".h") || lower.endsWith(".hpp");
+        if (!ok || !supportedExt) {
+            System.out.println(" Invalid file path or unsupported file type. Supported: .java, .py, .c, .cpp, .h");
             return;
         }
         
@@ -239,7 +248,20 @@ public class Main {
             String aiAnalysis = "";
             if (aiConfigured && geminiAI != null) {
                 System.out.println("\nGenerating AI insights...");
-                aiAnalysis = geminiAI.explainCode(fileAnalyzer.getFileContent());
+                String content = fileAnalyzer.getFileContent();
+                switch (aiMode) {
+                    case EXPLAIN:
+                        aiAnalysis = geminiAI.explainCode(content);
+                        break;
+                    case DEBUG:
+                        aiAnalysis = geminiAI.debugCode(content);
+                        break;
+                    case REFACTOR:
+                        aiAnalysis = geminiAI.refactorCode(content);
+                        break;
+                    default:
+                        aiAnalysis = geminiAI.explainCode(content);
+                }
                 System.out.println("\n==== AI Insights ====");
                 System.out.println(aiAnalysis);
             } else {
@@ -284,13 +306,40 @@ public class Main {
                     classCount,
                     methodCount,
                     variableCount,
-                    "Explain", // Using "Explain" as the AI action
+                    aiMode.name(),
                     aiInsights
                 );
             } catch (Exception e) {
                 System.out.println("Error saving to database: " + e.getMessage());
             }
         }
+    }
+
+    /**
+     * Prompts the user to choose AI mode (EXPLAIN/DEBUG/REFACTOR)
+     */
+    private static void setAIMode() {
+        System.out.println("\nSelect AI Mode:");
+        System.out.println("1. EXPLAIN");
+        System.out.println("2. DEBUG");
+        System.out.println("3. REFACTOR");
+        System.out.print("Enter your choice: ");
+        int choice = getChoice();
+        switch (choice) {
+            case 1:
+                aiMode = AIMode.EXPLAIN;
+                break;
+            case 2:
+                aiMode = AIMode.DEBUG;
+                break;
+            case 3:
+                aiMode = AIMode.REFACTOR;
+                break;
+            default:
+                System.out.println("Invalid mode choice. Keeping current: " + aiMode);
+                return;
+        }
+        System.out.println("AI mode set to: " + aiMode);
     }
     
     /**

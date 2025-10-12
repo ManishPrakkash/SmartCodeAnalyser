@@ -1,0 +1,32 @@
+# Maven / Java
+/target/
+/out/
+*.class
+*.jar
+
+# IntelliJ / VSCode
+.idea/
+*.iml
+/.vscode/
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Environment / credentials
+.env
+.env.*
+credentials.properties
+*.keystore
+
+# Backups and temporary files
+*.bak
+*.swp
+*~
+
+# Scripts and local configs that may contain secrets
+smart-analyzer.bat
+*.bat
+
+# Logs
+*.log

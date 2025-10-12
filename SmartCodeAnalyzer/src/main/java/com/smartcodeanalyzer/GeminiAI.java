@@ -158,12 +158,131 @@ public class GeminiAI {
      */
     public String refactorCode(String code) {
         String codeBlock = prepareCode(code);
-        String prompt = "REFACTOR (optimize):\n" +
-                        "1) TIME and SPACE complexity (current)\n" +
-                        "2) Is optimization possible? (yes/no) and short rationale\n" +
-                        "3) If yes: provide optimized code and new TIME/SPACE complexities\n\n" + codeBlock;
-        
-        return sendRequest(prompt);
+        String prompt = "REFACTOR (strict plain text, terminal-friendly):\n" +
+                        "OUTPUT FORMAT EXACTLY (no Markdown, no code fences):\n" +
+                        "TIME_COMPLEXITY: <big-O notation, e.g. O(n)>\n" +
+                        "SPACE_COMPLEXITY: <big-O notation, e.g. O(n)>\n" +
+                        "OPTIMIZATION_TIPS (exactly 5 short numbered points 1.-5.):\n" +
+                        "1. ...\n" +
+                        "2. ...\n" +
+                        "3. ...\n" +
+                        "4. ...\n" +
+                        "5. ...\n" +
+                        "OPTIMIZED_COMPLEXITY: TIME: <O(...)>, SPACE: <O(...)>\n" +
+                        "If the code is already optimally implemented, output a single line: ALREADY_OPTIMIZED: YES and a short reason.\n\n" + codeBlock;
+
+        String raw = sendRequest(prompt);
+        return sanitizeRefactorOutput(raw);
+    }
+
+    /**
+     * Normalize refactor output: strip markdown/backticks and enforce expected fields.
+     */
+    private String sanitizeRefactorOutput(String raw) {
+        if (raw == null) return "";
+        // Strip fences, backticks, bold/italic markers and common markdown artifacts
+        String cleaned = raw.replace("```", "").replace("`", "").replace("**", "").replace("__", "").replace("*", "");
+        // Remove common bullet characters at line starts
+        cleaned = cleaned.replaceAll("(?m)^\\s*[\\u2022\\u2023•*+-]+\\s*", "");
+
+        // Normalize whitespace and split
+        String[] lines = cleaned.split("\\r?\\n");
+
+        String timeC = "UNKNOWN";
+        String spaceC = "UNKNOWN";
+        boolean alreadyOptimized = false;
+        java.util.List<String> tips = new java.util.ArrayList<>();
+        StringBuilder codeBuf = new StringBuilder();
+
+        java.util.regex.Pattern oPattern = java.util.regex.Pattern.compile("O\\s*\\(?\\s*[^)\\n]+\\s*\\)?", java.util.regex.Pattern.CASE_INSENSITIVE);
+
+        for (int i = 0; i < lines.length; i++) {
+            String ln = lines[i].trim();
+            if (ln.isEmpty()) continue;
+            String low = ln.toLowerCase();
+
+            if (low.contains("already optim") || low.contains("already optimal") || low.contains("no optimization needed") || low.contains("no improvements")) {
+                alreadyOptimized = true;
+            }
+
+            // Detect explicit labels like TIME_COMPLEXITY: or timecomplexity:
+            if (low.startsWith("time_complexity") || low.startsWith("timecomplexity") || low.startsWith("time complexity") || low.startsWith("time:")) {
+                java.util.regex.Matcher m = oPattern.matcher(ln);
+                if (m.find()) timeC = m.group().toUpperCase().replaceAll("\\s+", "");
+                continue;
+            }
+            if (low.startsWith("space_complexity") || low.startsWith("spacecomplexity") || low.startsWith("space complexity") || low.startsWith("space:")) {
+                java.util.regex.Matcher m = oPattern.matcher(ln);
+                if (m.find()) spaceC = m.group().toUpperCase().replaceAll("\\s+", "");
+                continue;
+            }
+
+            // Collect code-like blocks: lines with semicolon, braces, 'return' or C-style types
+            if (ln.contains("{") || ln.contains("}") || ln.endsWith(";") || ln.startsWith("return ") || ln.matches(".*\\bint\\b.*|.*\\bvoid\\b.*|.*\\bString\\b.*")) {
+                codeBuf.append(ln).append(System.lineSeparator());
+                continue;
+            }
+
+            // Collect tips: numbered lines or lines with optimization verbs
+            String t = ln.replaceFirst("^\\d+[\\)\\.]?\\s*", "").trim();
+            if (t.matches("(?i).*(use|avoid|replace|reduce|cache|memoize|inline|simplify|remove|precompute|parallel|vectorize|optimi[sz]e|improv).*")) {
+                if (tips.size() < 5) tips.add(t);
+                continue;
+            }
+            if (ln.matches("^\\d+[\\)\\.]\\s+.*") && tips.size() < 5) {
+                tips.add(t);
+                continue;
+            }
+        }
+
+        // If complexities not found, search whole text for O(...) tokens
+        if (timeC.equals("UNKNOWN") || spaceC.equals("UNKNOWN")) {
+            java.util.regex.Matcher mAll = oPattern.matcher(cleaned);
+            java.util.List<String> found = new java.util.ArrayList<>();
+            while (mAll.find() && found.size() < 4) found.add(mAll.group().toUpperCase().replaceAll("\\s+", ""));
+            if (timeC.equals("UNKNOWN") && found.size() >= 1) timeC = found.get(0);
+            if (spaceC.equals("UNKNOWN") && found.size() >= 2) spaceC = found.get(1);
+        }
+
+        // Ensure exactly 5 tips (pad if necessary)
+        while (tips.size() < 5) tips.add("(no additional tip)");
+
+        // Build the canonical plain output desired by the user
+        StringBuilder out = new StringBuilder();
+        out.append("timecomplexity: ").append(timeC).append(System.lineSeparator());
+        out.append("spacecomplexity: ").append(spaceC).append(System.lineSeparator()).append(System.lineSeparator());
+
+        out.append("optimization tips:").append(System.lineSeparator());
+        for (int i = 0; i < 5; i++) {
+            out.append(i + 1).append(". ").append(tips.get(i)).append(System.lineSeparator());
+        }
+
+        out.append(System.lineSeparator());
+        out.append("optimized complexity:").append(System.lineSeparator());
+        out.append("TIME: ").append(timeC).append(System.lineSeparator());
+        out.append("SPACE: ").append(spaceC).append(System.lineSeparator()).append(System.lineSeparator());
+
+        if (alreadyOptimized) {
+            out.append("ALREADY_OPTIMIZED: YES").append(System.lineSeparator());
+            out.append("note: code appears already optimized or no better asymptotic improvement possible.").append(System.lineSeparator());
+            // If we captured a code block, show a short excerpt
+            if (codeBuf.length() > 0) {
+                out.append(System.lineSeparator());
+                out.append("optimized code (excerpt):").append(System.lineSeparator());
+                out.append(codeBuf.toString().trim()).append(System.lineSeparator());
+            }
+            return out.toString().trim();
+        }
+
+        // Normal case: include optimized code excerpt if present
+        if (codeBuf.length() > 0) {
+            out.append("optimized code (excerpt):").append(System.lineSeparator());
+            out.append(codeBuf.toString().trim()).append(System.lineSeparator());
+        } else {
+            out.append("optimized code: (not provided)").append(System.lineSeparator());
+        }
+
+        return out.toString().trim();
     }
 
     /**
@@ -375,38 +494,58 @@ public class GeminiAI {
                 return "API Error: " + error.get("message").getAsString();
             }
             
-            // Try to extract the content
-            if (!jsonResponse.has("candidates")) {
-                System.err.println("No 'candidates' field in response");
-                return "";
-            }
-            
-            JsonArray candidates = jsonResponse.getAsJsonArray("candidates");
-            if (candidates.size() == 0) {
-                System.err.println("Empty candidates array");
-                return "";
-            }
-            
-            JsonObject candidate = candidates.get(0).getAsJsonObject();
-            
-            if (!candidate.has("content")) {
-                System.err.println("No 'content' field in candidate");
-                return "";
-            }
-            
-            JsonObject content = candidate.getAsJsonObject("content");
-            
-            if (!content.has("parts")) {
-                System.err.println("No 'parts' field in content");
-                return "";
-            }
-            
-            JsonArray parts = content.getAsJsonArray("parts");
-            for (int i = 0; i < parts.size(); i++) {
-                JsonObject part = parts.get(i).getAsJsonObject();
-                if (part.has("text")) {
-                    result.append(part.get("text").getAsString());
+            // Try multiple known response shapes from Gemini / LLM providers
+            if (jsonResponse.has("candidates") && jsonResponse.get("candidates").isJsonArray()) {
+                JsonArray candidates = jsonResponse.getAsJsonArray("candidates");
+                if (candidates.size() > 0) {
+                    JsonObject candidate = candidates.get(0).getAsJsonObject();
+                    // Common shape: candidate.content.parts[].text
+                    if (candidate.has("content") && candidate.get("content").isJsonObject()) {
+                        JsonObject content = candidate.getAsJsonObject("content");
+                        if (content.has("parts") && content.get("parts").isJsonArray()) {
+                            JsonArray parts = content.getAsJsonArray("parts");
+                            for (int i = 0; i < parts.size(); i++) {
+                                try {
+                                    JsonObject part = parts.get(i).getAsJsonObject();
+                                    if (part.has("text")) {
+                                        result.append(part.get("text").getAsString());
+                                    }
+                                } catch (Exception e) {
+                                    // ignore malformed parts
+                                }
+                            }
+                        }
+                    }
+                    // Alternative: candidate.message or candidate.output
+                    if (result.length() == 0) {
+                        if (candidate.has("message")) {
+                            try { result.append(candidate.get("message").getAsString()); } catch (Exception ignore) {}
+                        } else if (candidate.has("output")) {
+                            try { result.append(candidate.get("output").getAsString()); } catch (Exception ignore) {}
+                        }
+                    }
                 }
+            }
+
+            // Some providers place the text in top-level fields like 'output' or 'response'
+            if (result.length() == 0) {
+                if (jsonResponse.has("output")) {
+                    try { result.append(jsonResponse.get("output").getAsString()); } catch (Exception ignore) {}
+                } else if (jsonResponse.has("response")) {
+                    try { result.append(jsonResponse.get("response").getAsString()); } catch (Exception ignore) {}
+                }
+            }
+
+            // Ollama-style: message.content
+            if (result.length() == 0 && jsonResponse.has("message")) {
+                try {
+                    JsonObject msg = jsonResponse.getAsJsonObject("message");
+                    if (msg.has("content")) result.append(msg.get("content").getAsString());
+                } catch (Exception ignore) {}
+            }
+
+            if (result.length() == 0) {
+                System.err.println("No textual content found in AI response; response shape may be different or empty.");
             }
         } catch (Exception e) {
             System.err.println("Error extracting text from response: " + e.getMessage());
